@@ -6,6 +6,7 @@ import subprocess
 import sublime
 import sublime_plugin
 
+from itertools import chain
 from pathlib import Path
 from threading import Thread
 from typing import Optional, Awaitable
@@ -87,16 +88,33 @@ def plugin_unloaded():
 class BashCompletionListener(sublime_plugin.ViewEventListener):
     enabled = True
 
+    shell="bash"
+
+    startupinfo = None
+    if sublime.platform() == "windows":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
     @classmethod
     def applies_to_primary_view_only(cls):
         return False
+
+    @classmethod
+    def is_applicable(cls, settings: sublime.Settings):
+        enabled = settings.get("shell.bash.enable_completions", True)
+        return enabled
 
     def on_query_completions(self, prefix: str, locations: list[sublime.Point]):
         if not self.enabled:
             return None
 
         pt = locations[0]
-        if not self.view.match_selector(pt, "source.shell - comment - string.quoted"):
+        selector = self.view.settings().get(
+            "shell.bash.completion_selector",
+            "source.shell - comment - string.quoted"
+        )
+        if not self.view.match_selector(pt, selector):
             return None
 
         # get last shell word in front of caret (doesn't account for quotes)
@@ -109,42 +127,131 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
         file_name = self.view.file_name()
         cwd = Path(file_name).parent if file_name else None
 
-        completions_list = sublime.CompletionList(None)
-        run_future(self.resolve_completions(completions_list, cwd, prefix))
-        return completions_list
+        completion_list = sublime.CompletionList(None)
+        run_future(self.resolve_completions(completion_list, cwd, pt, prefix))
+        return completion_list
 
     async def resolve_completions(
         self,
-        completions_list: sublime.CompletionList,
+        completion_list: sublime.CompletionList,
         cwd: Path | None,
+        pt: sublime.Point,
         prefix: str
     ):
-        items = []
+        """
+        Gather completions from various sources and add them to completion list.
+        """
+        coros = []
 
-        info = None
-        if sublime.platform() == "windows":
-            info = subprocess.STARTUPINFO()
-            info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            info.wShowWindow = subprocess.SW_HIDE
+        selector = self.view.settings().get(
+            "shell.bash.command_completion_selector",
+            "meta.function-call.identifier"
+        )
+        if self.view.match_selector(pt - 1, selector):
+            coros.append(self.get_commands(cwd, prefix))
 
+        selector = self.view.settings().get(
+            "shell.bash.file_completion_selector",
+            "- meta.function-call.identifier"
+        )
+        if self.view.match_selector(pt - 1, selector):
+            coros.append(self.get_files(cwd, prefix))
+
+        selector = self.view.settings().get(
+            "shell.bash.variable_completion_selector",
+            ""
+        )
+        if self.view.match_selector(pt - 1, selector):
+            coros.append(self.get_variables(cwd, prefix))
+
+        asyncio.gather(*coros).add_done_callback(
+            lambda f: completion_list.set_completions(chain(*f.result()))
+        )
+
+    async def get_commands(self, cwd: Path | None, prefix: str):
+        """
+        Gather all shell commands or globally available executables.
+        """
+        if not prefix:
+            # would cause too many results
+            return ()
+
+        text = await self.check_output(f"compgen -c {prefix}", cwd)
+        if not text:
+            # got nothing, skip!
+            return ()
+
+        file_kind = [sublime.KindId.FUNCTION, "f", "command"]
+        return (
+            sublime.CompletionItem(
+                trigger=word,
+                kind=file_kind,
+                details="shell command"
+            )
+            for word in set(text.splitlines()) - KNOWN_COMPLETIONS
+        )
+
+    async def get_files(self, cwd: Path | None, prefix: str):
+        """
+        Gather folders and files.
+        """
+        text = await self.check_output(f"compgen -f {prefix}", cwd)
+        if not text:
+            return ()
+
+        file_kind = [sublime.KindId.NAMESPACE, "f", "filesystem"]
+        return (
+            sublime.CompletionItem(
+                trigger=word,
+                kind=file_kind,
+                details="folder or file"
+            )
+            for word in set(text.splitlines()) - KNOWN_COMPLETIONS
+        )
+
+    async def get_variables(self, cwd: Path | None, prefix: str):
+        """
+        Gather all shell environment variables.
+        """
+        text = await self.check_output("compgen -v", cwd)
+        if not text:
+            return ()
+
+        is_var = prefix and prefix[0] == "$"
+
+        file_kind = [sublime.KindId.VARIABLE, "v", "Variable"]
+        return (
+            sublime.CompletionItem(
+                trigger=word,
+                completion=word if is_var else f"${word}",
+                kind=file_kind,
+                details="global environment variable"
+            )
+            for word in set(text.splitlines()) - KNOWN_COMPLETIONS
+        )
+
+    async def check_output(self, cmd: str, cwd: Path | None=None):
+        """
+        Run command in given login shell.
+
+        :param cmd:
+            The command to run
+        :param cwd:
+            The current working directory.
+
+        :returns:
+            Output string from stdout on success or `None` otherwise.
+        """
         try:
             proc = await asyncio.create_subprocess_shell(
-                f"bash -c \"compgen -cfv {prefix} \"",
+                cmd=f"{self.shell} -l -c \"{cmd}\"",
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
-                startupinfo=info)
+                startupinfo=self.startupinfo)
 
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
             if proc.returncode == 0:
-                file_kind = [sublime.KindId.NAMESPACE, "f", "filesystem"]
-                items = (
-                    sublime.CompletionItem(
-                        trigger=word,
-                        kind=file_kind,
-                        details="folder or file"
-                    )
-                    for word in set(str(stdout, "utf-8").splitlines()) - KNOWN_COMPLETIONS
-                )
+                return str(stdout, "utf-8").strip()
 
         except asyncio.exceptions.TimeoutError:
             pass
@@ -153,4 +260,4 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
             self.enabled = False
             print("Bash not found, disabling completions!")
 
-        completions_list.set_completions(items)
+        return None

@@ -1,0 +1,16 @@
+{
+	// If enabled provide shell completions in shell scripts.
+	"shell.bash.enable_completions": true,
+
+	// Primary selector required to match for completions to be evaluated.
+	"shell.bash.completion_selector": "source.shell - comment - string.quoted",
+
+	// Selector to specify in which context to provide command completions
+	"shell.bash.command_completion_selector": "meta.function-call.identifier",
+
+	// Selector to specify in which context to provide file/folder completions
+	"shell.bash.file_completion_selector": "- meta.function-call.identifier",
+
+	// Selector to specify in which context to provide variable completions
+	"shell.bash.variable_completion_selector": "",
+}
