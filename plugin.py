@@ -12,12 +12,15 @@ from typing import Optional, Awaitable
 
 __loop: Optional[asyncio.AbstractEventLoop] = None
 __thread: Optional[Thread] = None
+__tasks = set()
 
 def run_future(future: Awaitable):
-    global __loop
+    global __loop, __tasks
     if __loop:
-        f = asyncio.ensure_future(future, loop=__loop)
-        __loop.call_soon_threadsafe(asyncio.ensure_future, f)
+        task = asyncio.ensure_future(future, loop=__loop)
+        task.add_done_callback(__tasks.discard)
+        __tasks.add(task)
+        __loop.call_soon_threadsafe(asyncio.ensure_future, task)
 
 
 def setup_event_loop():
