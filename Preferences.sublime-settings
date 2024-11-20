@@ -1,4 +1,17 @@
 {
+	// Bash interpreter used to resolve completions.
+	//
+	// Notes:
+	// 1. Shell variables in paths are expanded.
+	// 2. Shell variables use unix form also on Windows.
+	//
+	// Valid values are:
+	// - `null`: system specific interpreter.
+	// - `"bash"`: bash executable found on $PATH (resolves to WSL on Windows)
+	// - `"$HOMEDRIVE\\cygwin64\\bin\\bash.exe"`
+	// - `"$PROGRAMFILES\\Git\\bin\\bash.exe"`
+	"shell.bash.interpreter": null,
+
 	// If enabled provide shell completions in shell scripts.
 	"shell.bash.enable_completions": true,
 

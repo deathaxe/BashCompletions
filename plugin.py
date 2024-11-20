@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import os
 import re
 import subprocess
 
@@ -86,10 +87,6 @@ def plugin_unloaded():
 
 
 class BashCompletionListener(sublime_plugin.ViewEventListener):
-    enabled = True
-
-    shell="bash"
-
     startupinfo = None
     if sublime.platform() == "windows":
         startupinfo = subprocess.STARTUPINFO()
@@ -102,8 +99,33 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
 
     @classmethod
     def is_applicable(cls, settings: sublime.Settings):
-        enabled = settings.get("shell.bash.enable_completions", True)
-        return enabled
+        cls.enabled = settings.get("shell.bash.enable_completions", True)
+        if not cls.enabled:
+            return False
+
+        fname = settings.get("shell.bash.interpreter", None)
+        if fname:
+            # use configured interpreter
+            cls.shell = f"\"{sublime.expand_variables(fname, os.environ)}\""
+            return True
+
+        if sublime.platform() != "windows":
+            # use normal bash on Linux/MacOS
+            cls.shell = "bash"
+            return True
+
+        # search bash on various default paths
+        for fname in (
+            "$HOMEDRIVE\\cygwin64\\bin\\bash.exe",
+            "$PROGRAMFILES\\Git\\bin\\bash.exe",
+            "$SYSTEMROOT\\System32\\bash.exe"  # uses WSL as last option
+        ):
+            fname = sublime.expand_variables(fname, os.environ)
+            if fname and os.path.exists(fname):
+                cls.shell = f"\"{fname}\""
+                return True
+
+        return False
 
     def on_query_completions(self, prefix: str, locations: list[sublime.Point]):
         if not self.enabled:
