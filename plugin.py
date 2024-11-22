@@ -87,6 +87,8 @@ def plugin_unloaded():
 
 
 class BashCompletionListener(sublime_plugin.ViewEventListener):
+    found_shell=None
+
     startupinfo = None
     if sublime.platform() == "windows":
         startupinfo = subprocess.STARTUPINFO()
@@ -114,18 +116,26 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
             cls.shell = "bash"
             return True
 
-        # search bash on various default paths
-        for fname in (
-            "$HOMEDRIVE\\cygwin64\\bin\\bash.exe",
-            "$PROGRAMFILES\\Git\\bin\\bash.exe",
-            "$SYSTEMROOT\\System32\\bash.exe"  # uses WSL as last option
-        ):
-            fname = sublime.expand_variables(fname, os.environ)
-            if fname and os.path.exists(fname):
-                cls.shell = f"\"{fname}\""
-                return True
+        # already know the shell
+        if cls.found_shell is None:
+            cls.found_shell = False
 
-        return False
+            # search bash on various default paths
+            for fname in (
+                "$HOMEDRIVE\\cygwin64\\bin\\bash.exe",
+                "$HOMEDRIVE\\cygwin\\bin\\bash.exe",
+                "$HOMEDRIVE\\mingw64\\bin\\bash.exe",
+                "$HOMEDRIVE\\mingw\\bin\\bash.exe",
+                "$PROGRAMFILES\\Git\\bin\\bash.exe",
+                "$SYSTEMROOT\\System32\\bash.exe"  # uses WSL as last option
+            ):
+                fname = sublime.expand_variables(fname, os.environ)
+                if fname and os.path.exists(fname):
+                    cls.shell = f"\"{fname}\""
+                    cls.found_shell = True
+                    break
+
+        return cls.found_shell
 
     def on_query_completions(self, prefix: str, locations: list[sublime.Point]):
         if not self.enabled:
