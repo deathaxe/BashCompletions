@@ -5,56 +5,11 @@ import re
 import subprocess
 
 import sublime
+import sublime_aio
 import sublime_plugin
 
 from itertools import chain
 from pathlib import Path
-from threading import Thread
-from typing import Optional, Awaitable
-
-__loop: Optional[asyncio.AbstractEventLoop] = None
-__thread: Optional[Thread] = None
-__tasks = set()
-
-def run_future(future: Awaitable):
-    global __loop, __tasks
-    if __loop:
-        task = asyncio.ensure_future(future, loop=__loop)
-        task.add_done_callback(__tasks.discard)
-        __tasks.add(task)
-        __loop.call_soon_threadsafe(asyncio.ensure_future, task)
-
-
-def setup_event_loop():
-    global __loop
-    global __thread
-
-    if __loop:
-        raise RuntimeError("Event loop already running!")
-    __loop = asyncio.new_event_loop()
-    __thread = Thread(target=__loop.run_forever)
-    __thread.start()
-
-
-def shutdown_event_loop():
-    global __loop
-    global __thread
-
-    if not __loop:
-        raise RuntimeError("No event loop to shutdown!")
-
-    def __shutdown():
-        for task in asyncio.all_tasks():
-            task.cancel()
-        asyncio.get_event_loop().stop()
-
-    if __loop and __thread:
-        __loop.call_soon_threadsafe(__shutdown)
-        __thread.join()
-        __loop.run_until_complete(__loop.shutdown_asyncgens())
-        __loop.close()
-    __loop = None
-    __thread = None
 
 
 def plugin_loaded():
@@ -79,14 +34,8 @@ def plugin_loaded():
                         else:
                             KNOWN_COMPLETIONS.add(str(item))
 
-    setup_event_loop()
 
-
-def plugin_unloaded():
-    shutdown_event_loop()
-
-
-class BashCompletionListener(sublime_plugin.ViewEventListener):
+class BashCompletionListener(sublime_aio.ViewEventListener):
     found_shell=None
 
     startupinfo = None
@@ -137,7 +86,7 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
 
         return cls.found_shell
 
-    def on_query_completions(self, prefix: str, locations: list[sublime.Point]):
+    async def on_query_completions(self, prefix: str, locations: list[sublime.Point]):
         if not self.enabled:
             return None
 
@@ -159,20 +108,6 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
         file_name = self.view.file_name()
         cwd = Path(file_name).parent if file_name else None
 
-        completion_list = sublime.CompletionList(None)
-        run_future(self.resolve_completions(completion_list, cwd, pt, prefix))
-        return completion_list
-
-    async def resolve_completions(
-        self,
-        completion_list: sublime.CompletionList,
-        cwd: Path | None,
-        pt: sublime.Point,
-        prefix: str
-    ):
-        """
-        Gather completions from various sources and add them to completion list.
-        """
         coros = []
 
         selector = self.view.settings().get(
@@ -196,9 +131,7 @@ class BashCompletionListener(sublime_plugin.ViewEventListener):
         if self.view.match_selector(pt - 1, selector):
             coros.append(self.get_variables(cwd, prefix))
 
-        asyncio.gather(*coros).add_done_callback(
-            lambda f: completion_list.set_completions(chain(*f.result()))
-        )
+        return chain(*await asyncio.gather(*coros))
 
     async def get_commands(self, cwd: Path | None, prefix: str):
         """
