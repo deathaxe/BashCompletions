@@ -218,7 +218,7 @@ class BashCompletionListener(sublime_aio.ViewEventListener):
             if proc.returncode == 0:
                 return str(stdout, "utf-8").strip()
 
-        except asyncio.exceptions.TimeoutError:
+        except asyncio.TimeoutError:
             pass
 
         except FileNotFoundError:
