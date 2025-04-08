@@ -2,6 +2,12 @@
 
 Native Bash auto completions for [Sublime Text](https://www.sublimetext.com).
 
+It uses `compgen` command to provide dynamic completions for
+
+- commands
+- files
+- variables
+
 ## Installation
 
 #### Package Control
