@@ -6,7 +6,6 @@ import subprocess
 
 import sublime
 import sublime_aio
-import sublime_plugin
 
 from itertools import chain
 from pathlib import Path
